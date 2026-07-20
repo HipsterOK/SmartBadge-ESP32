@@ -12,7 +12,7 @@ JPEGDEC jpeg;
 const char* ssid = "KIT VISUAL";
 const char* password = ""; // Open network
 AsyncWebServer server(80);
-DNSServer dnsServer;
+
 
 String currentFile = "";
 AnimatedGIF gif;
@@ -771,22 +771,21 @@ void setup() {
     Serial.println(IP);
 
     // 3. Настройка Web-сервера и Captive Portal
-    dnsServer.start(53, "*", IP);
-    
+    // Captive Portal disabled to prevent network registration popup
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         lastActivityTime = millis();
         request->send(200, "text/plain", "KIT VISUAL Ready");
     });
     
     server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->redirect("http://192.168.4.1/");
+        request->send(204);
     });
     
     server.onNotFound([](AsyncWebServerRequest *request){
         if (request->method() == HTTP_OPTIONS) {
             request->send(200);
         } else {
-            request->redirect("http://192.168.4.1/");
+            request->send(404, "text/plain", "Not Found");
         }
     });
 
@@ -869,7 +868,7 @@ void drawHQV2Frame() {
 }
 
 void loop() {
-    dnsServer.processNextRequest();
+    // dnsServer.processNextRequest();
     
     if (pending_file_write) {
         pending_file_write = false;
