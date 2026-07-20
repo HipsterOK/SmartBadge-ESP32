@@ -9,7 +9,7 @@
 
 JPEGDEC jpeg;
 
-const char* ssid = "SmartBadge";
+const char* ssid = "KIT VISUAL";
 const char* password = ""; // Open network
 AsyncWebServer server(80);
 DNSServer dnsServer;
@@ -666,7 +666,7 @@ void drawCurrentImage() {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("\nStarting Smart Badge Firmware...");
+    Serial.println("\nStarting KIT VISUAL Firmware...");
     Serial.printf("Total PSRAM: %d bytes\n", ESP.getPsramSize());
     Serial.printf("Free  PSRAM: %d bytes\n", ESP.getFreePsram());
     Serial.printf("Total heap:  %d bytes\n", ESP.getHeapSize());
@@ -740,7 +740,7 @@ void setup() {
     gfx->setTextColor(0xFFFF);
     gfx->setTextSize(3);
     gfx->setCursor(50, 220);
-    gfx->println("Wi-Fi: SmartBadge");
+    gfx->println("Wi-Fi: KIT VISUAL");
 
     // 1. Инициализация файловой системы
     if (!LittleFS.begin(true)) {
@@ -775,7 +775,7 @@ void setup() {
     
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         lastActivityTime = millis();
-        request->send(200, "text/plain", "Smart Badge Ready");
+        request->send(200, "text/plain", "KIT VISUAL Ready");
     });
     
     server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request){
