@@ -22,6 +22,7 @@ bool isGifPlaying = false;
 bool isHqVideoPlaying = false;
 int hqFps = 20;
 int loading_frame = 0;
+bool play_looping = true;
 
 uint16_t* back_buffer = nullptr; // PSRAM Back buffer for tearing prevention
 uint16_t* hqv2_frame_buffer = nullptr; // 240x240 internal frame buffer for HQV2
@@ -754,11 +755,19 @@ void setup() {
     // Загрузка последнего файла
     if (LittleFS.exists("/last_image.txt")) {
         File f = LittleFS.open("/last_image.txt", "r");
-        currentFile = f.readString();
-        currentFile.trim();
+        String content = f.readString();
         f.close();
+        content.trim();
+        int semicolon = content.indexOf(';');
+        if (semicolon != -1) {
+            play_looping = (content.substring(0, semicolon) == "1");
+            currentFile = content.substring(semicolon + 1);
+        } else {
+            currentFile = content;
+        }
+        
         if (currentFile != "" && LittleFS.exists(currentFile)) {
-            Serial.println("Loaded last image: " + currentFile);
+            Serial.println("Loaded last image: " + currentFile + " loop: " + String(play_looping));
             drawCurrentImage();
         }
     }
@@ -795,6 +804,12 @@ void setup() {
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) {
             Serial.printf("UploadStart: %s\n", filename.c_str());
+            if (request->hasParam("loop")) {
+                play_looping = (request->getParam("loop")->value() == "1" || request->getParam("loop")->value() == "true");
+            } else {
+                play_looping = true;
+            }
+
             is_uploading = true;
             digitalWrite(GFX_BL, LOW);
             loading_frame = 0;
@@ -812,10 +827,7 @@ void setup() {
             if (upload_psram_buffer) { free(upload_psram_buffer); upload_psram_buffer = nullptr; }
             if (uploadFile) uploadFile.close();
 
-            LittleFS.remove("/badge_image.gif");
-            LittleFS.remove("/badge_image.hqv2");
-            LittleFS.remove("/badge_image.hqbv");
-            LittleFS.remove("/badge_image.jpg");
+
 
             uploadFile = LittleFS.open(currentFile, "w");
         }
@@ -828,11 +840,69 @@ void setup() {
             Serial.printf("UploadEnd: %s, %u B\n", filename.c_str(), index + len);
             if (uploadFile) { uploadFile.flush(); uploadFile.close(); }
             File f = LittleFS.open("/last_image.txt", "w");
-            if (f) { f.print(currentFile); f.close(); }
+            if (f) { f.print(String(play_looping ? "1" : "0") + ";" + currentFile); f.close(); }
             
             pending_file_write = true;
             is_uploading = false;
             digitalWrite(GFX_BL, HIGH);
+        }
+    });
+
+    server.on("/list", HTTP_GET, [](AsyncWebServerRequest *request){
+        String json = "[";
+        File root = LittleFS.open("/");
+        File file = root.openNextFile();
+        bool first = true;
+        while (file) {
+            String fname = String(file.name());
+            if (fname != "last_image.txt") {
+                if (!first) json += ",";
+                json += "{\"name\":\"/" + fname + "\",\"size\":" + String(file.size()) + "}";
+                first = false;
+            }
+            file = root.openNextFile();
+        }
+        json += "]";
+        request->send(200, "application/json", json);
+    });
+
+    server.on("/play", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (request->hasParam("file")) {
+            String filename = request->getParam("file")->value();
+            if (LittleFS.exists(filename)) {
+                if (request->hasParam("loop")) {
+                    play_looping = (request->getParam("loop")->value() == "1" || request->getParam("loop")->value() == "true");
+                } else {
+                    play_looping = true;
+                }
+                currentFile = filename;
+                File f = LittleFS.open("/last_image.txt", "w");
+                if (f) { f.print(String(play_looping ? "1" : "0") + ";" + currentFile); f.close(); }
+                
+                is_uploading = false;
+                pending_file_write = true;
+                request->send(200, "text/plain", "Playing");
+            } else {
+                request->send(404, "text/plain", "File not found");
+            }
+        } else {
+            request->send(400, "text/plain", "Missing file parameter");
+        }
+    });
+
+    server.on("/delete", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (request->hasParam("file")) {
+            String filename = request->getParam("file")->value();
+            if (filename == currentFile) {
+                request->send(400, "text/plain", "Cannot delete currently playing file");
+            } else if (LittleFS.exists(filename)) {
+                LittleFS.remove(filename);
+                request->send(200, "text/plain", "Deleted");
+            } else {
+                request->send(404, "text/plain", "File not found");
+            }
+        } else {
+            request->send(400, "text/plain", "Missing file parameter");
         }
     });
 
@@ -1000,11 +1070,11 @@ void loop() {
                     delay(nextFrameTime - now);
                 }
             } else {
-                hqbv_psram_offset = 0;
+                if (play_looping) hqbv_psram_offset = 0; else isHqVideoPlaying = false;
             }
             delay(1); // Feed the watchdog!
         } else {
-            hqbv_psram_offset = 0;
+            if (play_looping) hqbv_psram_offset = 0; else isHqVideoPlaying = false;
         }
         delay(1);
 
@@ -1120,10 +1190,10 @@ void loop() {
                     currentFileFrameIndex++;
                 }
             } else {
-                hqVideoFile.seek(0);
+                if (play_looping) hqVideoFile.seek(0); else isHqVideoPlaying = false;
             }
         } else {
-            hqVideoFile.seek(0); // End of file, loop
+            if (play_looping) hqVideoFile.seek(0); else isHqVideoPlaying = false; // End of file
         }
         yield();
         
@@ -1154,7 +1224,10 @@ void loop() {
                 while (isGifPlaying && !is_uploading) {
                     unsigned long startDecode = millis();
                     int result = gif.playFrame(false, &delayMs);
-                    if (!result) break;
+                    if (!result) {
+                        if (!play_looping) isGifPlaying = false;
+                        break;
+                    }
                     
                     if (timeDebt > 0) {
                         timeDebt -= delayMs;
